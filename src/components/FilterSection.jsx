@@ -107,6 +107,7 @@ const FilterSection = ({
       className="roulette-button"
       onClick={handleRoulette}
       disabled={loading}
+      tabIndex={0}
       style={{ marginLeft: 'auto', minWidth: 180, height: 36, fontSize: '0.95rem', padding: '0 18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
     >
       {loading ? <span style={{ display: 'inline-block', width: 22, height: 22, verticalAlign: 'middle' }}><span style={{ display: 'block', width: 22, height: 22, border: '3px solid #fff', borderTop: '3px solid #ff3300', borderRadius: '50%', animation: 'spin 1s linear infinite', boxSizing: 'border-box' }} /><style>{`@keyframes spin { 0% { transform: rotate(0deg);} 100% { transform: rotate(360deg);} }`}</style></span> : 'Spin the Roulette!'}

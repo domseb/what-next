@@ -38,7 +38,7 @@ npm install
 
 4. Update the API key in the app:
    - Open `src/App.jsx`
-   - Replace `'4PSbldWKiYnq4HwWBM7DdVe0UAfbJjLBAgNyAgDN'` with your actual API key (lines 47 and 89)
+   - Replace `'X7qaTQtdajZuOnkoShL30ZtY0wbQ1CHCHOPBF8d4'` with your actual API key (lines 47 and 89)
 
 5. Start the development server:
 ```bash

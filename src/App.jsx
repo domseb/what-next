@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Select from 'react-select'
 import axios from 'axios'
 import './App.css'
@@ -16,11 +16,16 @@ function App() {
   const [providers, setProviders] = useState([])
   const [genres, setGenres] = useState([])
   const [allSources, setAllSources] = useState([])
+  const [allDetailedResults, setAllDetailedResults] = useState([])
   const [shownIds, setShownIds] = useState([])
+  const [current3, setCurrent3] = useState([])
+  const [lastFetchLoading, setLastFetchLoading] = useState(false)
+  const lastFiltersRef = useRef({ providers: [], types: [], genres: [] })
   const contentTypes = [
     { value: 'movie', label: 'Movie' },
     { value: 'tv_series', label: 'TV Series' }
   ];
+  const [pageKey, setPageKey] = useState(0)
 
   // Australian streaming providers (using actual Watchmode IDs)
   const australianProviders = [
@@ -56,7 +61,7 @@ function App() {
       try {
         const response = await axios.get('https://api.watchmode.com/v1/genres', {
           params: {
-            apiKey: '4PSbldWKiYnq4HwWBM7DdVe0UAfbJjLBAgNyAgDN'
+            apiKey: 'X7qaTQtdajZuOnkoShL30ZtY0wbQ1CHCHOPBF8d4'
           }
         })
         const genreOptions = response.data.map(genre => ({
@@ -87,95 +92,139 @@ function App() {
     fetchGenres()
   }, [])
 
+  // Fetch all streaming sources for provider logos/info
+  useEffect(() => {
+    const fetchSources = async () => {
+      try {
+        const response = await axios.get('https://api.watchmode.com/v1/sources', {
+          params: { apiKey: 'X7qaTQtdajZuOnkoShL30ZtY0wbQ1CHCHOPBF8d4' }
+        })
+        setAllSources(response.data)
+        console.log('Fetched allSources:', response.data)
+      } catch (error) {
+        console.error('Failed to fetch sources:', error)
+      }
+    }
+    fetchSources()
+  }, [])
+
   // Helper to get source info by id
   const getSourceInfo = (id) => allSources.find(s => s.id === id)
 
-  const handleRoulette = async () => {
-    setLoading(true)
-    try {
-      const totalPages = 10 // up to 10 pages (500 results max)
-      let allTitles = []
-      let found = []
-      let page = 1
-      const selectedProviderIds = selectedProviders.map(p => p.value)
-      // Track new IDs for this spin
-      let newShownIds = [...shownIds]
-      let exhausted = false
-      while (found.length < 3 && page <= totalPages) {
+  // Helper to pick 3 random, unseen titles from the pool
+  const pick3Random = useCallback((pool, alreadyShown) => {
+    const unseen = pool.filter(item => !alreadyShown.includes(item.id))
+    let picks = []
+    let newShown = [...alreadyShown]
+    if (unseen.length < 3) {
+      // If not enough unseen, reset
+      newShown = []
+      picks = pool.sort(() => 0.5 - Math.random()).slice(0, 3)
+      newShown = picks.map(item => item.id)
+    } else {
+      picks = unseen.sort(() => 0.5 - Math.random()).slice(0, 3)
+      newShown = [...alreadyShown, ...picks.map(item => item.id)]
+    }
+    return { picks, newShown }
+  }, [])
+
+  // Helper to compare filters
+  const filtersEqual = (a, b) => {
+    const arrEq = (x, y) => x.length === y.length && x.every((v, i) => v === y[i])
+    return arrEq(a.providers, b.providers) && arrEq(a.types, b.types) && arrEq(a.genres, b.genres)
+  }
+
+  // Handle roulette spin (fetch if filters changed, else just pick 3 new)
+  const handleRoulette = useCallback(async () => {
+    // Build current filters
+    const currentFilters = {
+      providers: selectedProviders.map(p => p.value).sort(),
+      types: selectedTypes.map(t => t.value).sort(),
+      genres: selectedGenres.map(g => g.value).sort(),
+    }
+    // If filters changed, fetch new pool
+    if (!filtersEqual(currentFilters, lastFiltersRef.current)) {
+      setLastFetchLoading(true)
+      setAllDetailedResults([])
+      setShownIds([])
+      setCurrent3([])
+      try {
         const params = {
-          apiKey: '4PSbldWKiYnq4HwWBM7DdVe0UAfbJjLBAgNyAgDN',
-          limit: 50,
+          apiKey: 'X7qaTQtdajZuOnkoShL30ZtY0wbQ1CHCHOPBF8d4',
           sort_by: 'relevance_desc',
           regions: 'AU',
-          page
         }
-        if (selectedTypes.length > 0) {
-          params.types = selectedTypes.map(type => type.value).join(',')
+        if (currentFilters.types.length > 0) {
+          params.types = currentFilters.types.join(',')
         }
-        if (selectedGenres.length > 0) {
-          params.genres = selectedGenres.map(genre => genre.value).join(',')
+        if (currentFilters.genres.length > 0) {
+          params.genres = currentFilters.genres.join(',')
         }
-        if (selectedProviders.length > 0) {
-          params.sources = selectedProviders.map(provider => provider.value).join(',')
+        if (currentFilters.providers.length > 0) {
+          params.source_ids = currentFilters.providers.join(',')
         }
         const response = await axios.get('https://api.watchmode.com/v1/list-titles', { params })
-        if (response.data && response.data.titles) {
-          // Deduplicate by ID
-          const newTitles = response.data.titles.filter(t => !allTitles.some(at => at.id === t.id))
-          allTitles = allTitles.concat(newTitles)
-          // Fetch sources/details for new titles only
-          const withSources = await Promise.all(newTitles.map(async (item) => {
-            try {
-              const [srcResp, detailsResp] = await Promise.all([
-                axios.get(`https://api.watchmode.com/v1/title/${item.id}/sources`, {
-                  params: { apiKey: '4PSbldWKiYnq4HwWBM7DdVe0UAfbJjLBAgNyAgDN' }
-                }),
-                axios.get(`https://api.watchmode.com/v1/title/${item.id}/details`, {
-                  params: { apiKey: '4PSbldWKiYnq4HwWBM7DdVe0UAfbJjLBAgNyAgDN' }
-                })
-              ])
-              const auSources = srcResp.data.filter(s => s.region === 'AU' && (s.type === 'sub' || s.type === 'free'))
-              const criticScore = detailsResp.data.critic_score
-              const image_url = detailsResp.data.posterLarge || detailsResp.data.posterMedium || detailsResp.data.poster || item.poster
-              return { ...item, auSources, criticScore, image_url }
-            } catch {
-              return { ...item, auSources: [], criticScore: null, image_url: item.poster }
+        const titles = response.data.titles || []
+        // Fetch details/sources for all 250
+        const detailed = await Promise.all(titles.map(async (item) => {
+          try {
+            const [detailsResp, sourcesResp] = await Promise.all([
+              axios.get(`https://api.watchmode.com/v1/title/${item.id}/details`, {
+                params: { apiKey: params.apiKey }
+              }),
+              axios.get(`https://api.watchmode.com/v1/title/${item.id}/sources`, {
+                params: { apiKey: params.apiKey }
+              })
+            ])
+            const details = detailsResp.data
+            const sources = sourcesResp.data
+            const auSources = sources.filter(s => s.region === 'AU' && (s.type === 'sub' || s.type === 'free'))
+            return {
+              ...item,
+              image_url: details.posterLarge || details.poster || details.posterMedium || '',
+              criticScore: details.critic_score,
+              auSources,
             }
-          }))
-          // Client-side filter: only show titles available on at least one selected provider in AU
-          const providerFiltered = withSources.filter(item => {
-            if (selectedProviderIds.length === 0) return true
-            const auSourceIds = item.auSources.map(src => src.source_id)
-            return selectedProviderIds.some(id => auSourceIds.includes(id))
-          })
-          // Filter out titles with criticScore < 80
-          const criticFiltered = providerFiltered.filter(
-            item => typeof item.criticScore === 'number' && item.criticScore >= 80
-          )
-          // Exclude already shown IDs
-          const unseen = criticFiltered.filter(item => !newShownIds.includes(item.id))
-          found = found.concat(unseen)
-        }
-        page++
-      }
-      // If not enough new results, reset shownIds and try again (once)
-      if (found.length < 3 && shownIds.length > 0) {
+          } catch {
+            return { ...item, image_url: '', criticScore: null, auSources: [] }
+          }
+        }))
+        // Filter out scores under 70
+        const filteredByScore = detailed.filter(item => (item.criticScore || 0) >= 70)
+        setAllDetailedResults(filteredByScore)
+        // Pick initial 3 at random from the filtered pool
+        const { picks, newShown } = pick3Random(filteredByScore, [])
+        setCurrent3(picks)
+        setShownIds(newShown)
+        lastFiltersRef.current = currentFilters
+      } catch (error) {
+        setAllDetailedResults([])
+        setCurrent3([])
         setShownIds([])
-        // Try again with a fresh pool
-        setTimeout(handleRoulette, 0)
-        return
+      } finally {
+        setLastFetchLoading(false)
       }
-      // Shuffle and pick 3
-      const shuffled = [...found].sort(() => 0.5 - Math.random())
-      const selected = shuffled.slice(0, 3)
-      setRecommendations(selected)
-      setShownIds([...shownIds, ...selected.map(item => item.id)])
-    } catch (error) {
-      setRecommendations([])
-    } finally {
-      setLoading(false)
+    } else {
+      // Just pick 3 new from the stored pool
+      if (allDetailedResults.length === 0) return
+      const { picks, newShown } = pick3Random(allDetailedResults, shownIds)
+      setCurrent3(picks)
+      setShownIds(newShown)
+      setPageKey(prev => prev + 1)
     }
-  }
+  }, [selectedProviders, selectedTypes, selectedGenres, allDetailedResults, shownIds, pick3Random])
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const tag = document.activeElement.tagName.toLowerCase();
+      if ((e.key === 'Enter' || e.key === 'r') && tag !== 'input' && tag !== 'select' && tag !== 'textarea') {
+        e.preventDefault();
+        handleRoulette();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleRoulette]);
 
   return (
     <div className="app">
@@ -193,10 +242,10 @@ function App() {
           selectedGenres={selectedGenres}
           setSelectedGenres={setSelectedGenres}
           handleRoulette={handleRoulette}
-          loading={loading}
+          loading={loading || lastFetchLoading}
         />
         <div className="recommendations-section">
-          <RecommendationGrid recommendations={recommendations} getSourceInfo={getSourceInfo} loading={loading} />
+          <RecommendationGrid recommendations={current3} getSourceInfo={getSourceInfo} loading={loading || lastFetchLoading} pageKey={pageKey} />
         </div>
       </main>
     </div>
